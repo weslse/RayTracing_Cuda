@@ -86,6 +86,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="custom_cudart.h" />
+    <ClInclude Include="ray.h" />
     <ClInclude Include="Timer.h" />
     <ClInclude Include="vec3.h" />
   </ItemGroup>
