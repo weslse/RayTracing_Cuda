@@ -23,7 +23,7 @@ __global__ void render(float *fb, int max_x, int max_y) {
 	int pixel_index = j * max_x * 3 + i * 3;
 	fb[pixel_index + 0] = float(i) / max_x;
 	fb[pixel_index + 1] = float(j) / max_y;
-	fb[pixel_index + 2] = 0.2;
+	fb[pixel_index + 2] = 0.2f;
 }
 
 int main() {
@@ -32,7 +32,7 @@ int main() {
 	int tx = 8;
 	int ty = 8;
 
-	int num_pixels = nx * ny;
+	int num_pixels = img_x * img_y;
 	size_t fb_size = 3 * num_pixels * sizeof(float);
 
 	// allocate FB
@@ -45,7 +45,7 @@ int main() {
 	render << <blocks, threads >> > (fb, img_x, img_y);
 	checkCudaErrors(cudaGetLastError());
 	checkCudaErrors(cudaDeviceSynchronize());
-	
+
 	// Output FB as Image
 	std::cout << "P3\n" << img_x << " " << img_y << "\n255\n";
 	for (int j = img_y - 1; j >= 0; j--) {
@@ -54,9 +54,9 @@ int main() {
 			float r = fb[pixel_idx + 0];
 			float g = fb[pixel_idx + 1];
 			float b = fb[pixel_idx + 2];
-			int ir = int(255.99*r);
-			int ig = int(255.99*g);
-			int ib = int(255.99*b);
+			int ir = int(255.999f * r);
+			int ig = int(255.999f * g);
+			int ib = int(255.999f * b);
 			std::cout << ir << " " << ig << " " << ib << "\n";
 		}
 	}
