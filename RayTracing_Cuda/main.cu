@@ -1,7 +1,8 @@
 #include <iostream>
 #include <time.h>
 
-#include "custom_cudart.h"
+#include "Timer.h"
+#include "vec3.h"
 
 // limited version of checkCudaErrors from helper_cuda.h in CUDA examples
 #define checkCudaErrors(val) check_cuda( (val), #val, __FILE__, __LINE__ )
@@ -16,50 +17,62 @@ void check_cuda(cudaError_t result, char const *const func, const char *const fi
 	}
 }
 
-__global__ void render(float *fb, int max_x, int max_y) {
-	int i = threadIdx.x + blockIdx.x * blockDim.x;
-	int j = threadIdx.y + blockIdx.y * blockDim.y;
+__global__ void render(vec3 *fb, int max_x, int max_y) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	int j = blockIdx.y * blockDim.y + threadIdx.y;
 	if ((i >= max_x) || (j >= max_y)) return;
-	int pixel_index = j * max_x * 3 + i * 3;
-	fb[pixel_index + 0] = float(i) / max_x;
-	fb[pixel_index + 1] = float(j) / max_y;
-	fb[pixel_index + 2] = 0.2f;
+	int pixel_index = j * max_x + i;
+	fb[pixel_index] = color(float(i) / max_x, float(j) / max_y, 0.2f);
 }
 
 int main() {
+	Timer* timer = new Timer();
+
 	int img_x = 256;
 	int img_y = 256;
 	int tx = 8;
 	int ty = 8;
+	
+	std::cerr << "Rendering a " << img_x << "x" << img_y << " image ";
+	std::cerr << "in " << tx << "x" << ty << " blocks.\n";
 
 	int num_pixels = img_x * img_y;
-	size_t fb_size = 3 * num_pixels * sizeof(float);
+	size_t fb_size = num_pixels * sizeof(vec3);
 
 	// allocate FB
-	float *fb;
-	checkCudaErrors(cudaMalloc((void **)&fb, fb_size));
+	vec3 *fb;
+	checkCudaErrors(cudaMallocManaged((void **)&fb, fb_size));
 
 	// Render our buffer
 	dim3 blocks(img_x / tx + 1, img_y / ty + 1);
 	dim3 threads(tx, ty);
+
+	timer->Start();
 	render << <blocks, threads >> > (fb, img_x, img_y);
 	checkCudaErrors(cudaGetLastError());
 	checkCudaErrors(cudaDeviceSynchronize());
+	
+	timer->End();
+	std::cerr << "took " << timer->GetElapsedTime() << " seconds.\n";
 
 	// Output FB as Image
 	std::cout << "P3\n" << img_x << " " << img_y << "\n255\n";
-	for (int j = img_y - 1; j >= 0; j--) {
-		for (int i = 0; i < img_x; i++) {
-			size_t pixel_idx = j * 3 * img_x + i * 3;
-			float r = fb[pixel_idx + 0];
-			float g = fb[pixel_idx + 1];
-			float b = fb[pixel_idx + 2];
+
+	for (int j = img_y - 1; j >= 0; --j) {
+		for (int i = 0; i < img_x; ++i) {
+			size_t pixel_idx = j * img_x + i;
+			float r = fb[pixel_idx + 0].r();
+			float g = fb[pixel_idx + 1].g();
+			float b = fb[pixel_idx + 2].b();
 			int ir = int(255.999f * r);
 			int ig = int(255.999f * g);
 			int ib = int(255.999f * b);
 			std::cout << ir << " " << ig << " " << ib << "\n";
 		}
 	}
-
+	
 	checkCudaErrors(cudaFree(fb));
+	delete timer;
+
+	return 0;
 }
