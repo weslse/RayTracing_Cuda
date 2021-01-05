@@ -21,7 +21,18 @@ void check_cuda(cudaError_t result, char const *const func, const char *const fi
 	}
 }
 
+__device__ bool hit_sphere(const point3& center, float radius, const ray& r) {
+	vec3 oc = r.origin() - center;
+	auto a = dot(r.direction(), r.direction());
+	auto b = 2.f * dot(oc, r.direction());
+	auto c = dot(oc, oc) - radius * radius;
+	auto discriminant = b * b - 4 * a * c;
+	return (discriminant > 0.f);
+}
+
 __device__ color ray_color(const ray& r) {
+	if (hit_sphere(point3(0.f, 0.f, -1.f), 0.5f, r))
+		return color(1.f, 0.f, 0.f);
 	vec3 unit_direction = unit_vector(r.direction());
 	auto t = 0.5f * (unit_direction.y() + 1.f);
 	return (1.f - t) * color(1.f, 1.f, 1.f) + t * color(0.5f, 0.7f, 1.f);
@@ -29,6 +40,7 @@ __device__ color ray_color(const ray& r) {
 
 __global__ void render(vec3 *fb, int max_x, int max_y,
 	point3* origin, vec3* horizontal, vec3* vertical, vec3* lower_left_corner) {
+
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	int j = blockIdx.y * blockDim.y + threadIdx.y;
 	if ((i >= max_x) || (j >= max_y)) return;
