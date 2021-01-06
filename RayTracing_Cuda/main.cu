@@ -25,31 +25,12 @@ void check_cuda(cudaError_t result, char const *const func, const char *const fi
 
 // Device Functions
 
-__device__ float hit_sphere(const point3& center, float radius, const ray& r) {
-	vec3 oc = r.origin() - center;
-	auto a = r.direction().length_squared();
-	auto half_b = dot(oc, r.direction());
-	auto c = oc.length_squared() - radius * radius;
-	auto discriminant = half_b * half_b - a * c;
-	if (discriminant < 0.f) {
-		return -1.f;
-	}
-	else {
-		return (-half_b - sqrtf(discriminant)) / a;
-	}
-}
-
 __device__ color ray_color(const ray& r, const hittable_list* world) {
 	hit_record rec;
 	if (world->hit(r, 0.f, infinity, rec)) {
 		return 0.5f * (rec.normal + color(1.f, 1.f, 1.f));
 	}
-	//auto t = hit_sphere(point3(0.f, 0.f, -1.f), 0.5f, r);
-	//if (t > 0.f) {
-	//	vec3 N = unit_vector(r.at(t) - vec3(0.f, 0.f, -1.f));
-	//	return 0.5f*color(N.x() + 1.f, N.y() + 1.f, N.z() + 1.f);
-	//}
-
+	
 	vec3 unit_direction = unit_vector(r.direction());
 	auto t = 0.5f * (unit_direction.y() + 1.f);
 
