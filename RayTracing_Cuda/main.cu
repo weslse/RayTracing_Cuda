@@ -1,15 +1,17 @@
-#include <iostream>
-#include <time.h>
-
 #include "Timer.h"
-#include "vec3.h"
-#include "ray.h"
+#include "rtcuda.h"
+#include "hittable_list.h"
+#include "sphere.h"
 
+#include <iostream>
 
 // limited version of checkCudaErrors from helper_cuda.h in CUDA examples
 #define checkCudaErrors(val) check_cuda( (val), #val, __FILE__, __LINE__ )
 
-__constant__ point3 d_origin = { 0,0,0 };
+__constant__ point3 d_origin;
+__constant__ vec3 d_horizontal;
+__constant__ vec3 d_vertical;
+__constant__ vec3 d_lower_left_corner;
 
 void check_cuda(cudaError_t result, char const *const func, const char *const file, int const line) {
 	if (result) {
@@ -21,36 +23,73 @@ void check_cuda(cudaError_t result, char const *const func, const char *const fi
 	}
 }
 
-__device__ bool hit_sphere(const point3& center, float radius, const ray& r) {
+// Device Functions
+
+__device__ float hit_sphere(const point3& center, float radius, const ray& r) {
 	vec3 oc = r.origin() - center;
-	auto a = dot(r.direction(), r.direction());
-	auto b = 2.f * dot(oc, r.direction());
-	auto c = dot(oc, oc) - radius * radius;
-	auto discriminant = b * b - 4 * a * c;
-	return (discriminant > 0.f);
+	auto a = r.direction().length_squared();
+	auto half_b = dot(oc, r.direction());
+	auto c = oc.length_squared() - radius * radius;
+	auto discriminant = half_b * half_b - a * c;
+	if (discriminant < 0.f) {
+		return -1.f;
+	}
+	else {
+		return (-half_b - sqrtf(discriminant)) / a;
+	}
 }
 
-__device__ color ray_color(const ray& r) {
-	if (hit_sphere(point3(0.f, 0.f, -1.f), 0.5f, r))
-		return color(1.f, 0.f, 0.f);
+__device__ color ray_color(const ray& r, const hittable_list* world) {
+	hit_record rec;
+	if (world->hit(r, 0.f, infinity, rec)) {
+		return 0.5f * (rec.normal + color(1.f, 1.f, 1.f));
+	}
+	//auto t = hit_sphere(point3(0.f, 0.f, -1.f), 0.5f, r);
+	//if (t > 0.f) {
+	//	vec3 N = unit_vector(r.at(t) - vec3(0.f, 0.f, -1.f));
+	//	return 0.5f*color(N.x() + 1.f, N.y() + 1.f, N.z() + 1.f);
+	//}
+
 	vec3 unit_direction = unit_vector(r.direction());
 	auto t = 0.5f * (unit_direction.y() + 1.f);
+
 	return (1.f - t) * color(1.f, 1.f, 1.f) + t * color(0.5f, 0.7f, 1.f);
 }
 
-__global__ void render(vec3 *fb, int max_x, int max_y,
-	point3* origin, vec3* horizontal, vec3* vertical, vec3* lower_left_corner) {
+
+// Global Functions
+
+__global__ void createWorld(hittable** d_objList, hittable_list** d_world, const size_t objListSize) {
+	if (threadIdx.x == 0 && blockIdx.x == 0) {
+		*(d_objList) = new sphere(point3(0.f, 0.f, -1.f), 0.5f);
+		*(d_objList + 1) = new sphere(point3(0.f, -100.5f, -1.f), 100.f);
+		*d_world = new hittable_list(d_objList, objListSize);
+	}
+}
+
+__global__ void destoryWorld(hittable** d_objList, hittable_list** d_world, size_t objListSize) {
+	if (threadIdx.x == 0 && blockIdx.x == 0) {
+		(*d_world)->clear();
+		delete *(d_objList + 1);
+		delete *(d_objList);
+	}
+}
+
+__global__ void render(vec3 *fb, int imgSize_x, int imgSize_y, hittable_list** world) {
 
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	int j = blockIdx.y * blockDim.y + threadIdx.y;
-	if ((i >= max_x) || (j >= max_y)) return;
-	float u = float(i) / (max_x - 1);
-	float v = float(j) / (max_y - 1);
-	ray r(*origin, *lower_left_corner + u * *horizontal + v * *vertical - *origin);
-	color pixel_color = ray_color(r);
-	int pixel_index = j * max_x + i;
+	if ((i >= imgSize_x) || (j >= imgSize_y))
+		return;
+
+	float u = float(i) / (imgSize_x - 1);
+	float v = float(j) / (imgSize_y - 1);
+	ray r(d_origin, d_lower_left_corner + u * d_horizontal + v * d_vertical - d_origin);
+	color pixel_color = ray_color(r, *world);
+	int pixel_index = j * imgSize_x + i;
 	fb[pixel_index] = pixel_color;
 }
+
 
 int main() {
 	Timer* timer = new Timer();
@@ -60,31 +99,39 @@ int main() {
 	int img_x = 400;
 	int img_y = static_cast<int>(img_x / aspect_ratio);
 
-	// Camera
+	// World
+	size_t objListSize = 2;
+	hittable** d_objList = nullptr;
+	checkCudaErrors(cudaMalloc((void**)&d_objList, sizeof(hittable*) * objListSize));
 
+	hittable_list** d_world = nullptr;
+	checkCudaErrors(cudaMalloc((void**)&d_world, sizeof(hittable_list*)));;
+
+	createWorld << <1, 1 >> > (d_objList, d_world, objListSize);
+	checkCudaErrors(cudaGetLastError());
+	checkCudaErrors(cudaDeviceSynchronize());
+
+
+	// Camera
 	auto viewport_height = 2.f;
 	auto viewport_width = aspect_ratio * viewport_height;
 	auto focal_length = 1.f;
 
 	size_t vec_size = sizeof(vec3);
 
-	point3* origin = nullptr;
-	checkCudaErrors(cudaMallocManaged((void **)&origin, vec_size));
-	*origin = point3(0.f, 0.f, 0.f);
+	point3 origin = point3(0.f, 0.f, 0.f);
+	checkCudaErrors(cudaMemcpyToSymbol((const void*)&d_origin, &origin, vec_size));
 
-	vec3* horizontal = nullptr;
-	checkCudaErrors(cudaMallocManaged((void **)&horizontal, vec_size));
-	*horizontal = vec3(viewport_width, 0.f, 0.f);
+	vec3 horizontal = vec3(viewport_width, 0.f, 0.f);
+	checkCudaErrors(cudaMemcpyToSymbol((const void*)&d_horizontal, &horizontal, vec_size));
 
-	vec3* vertical = nullptr;
-	checkCudaErrors(cudaMallocManaged((void **)&vertical, vec_size));
-	*vertical = vec3(0.f, viewport_height, 0.f);
+	vec3 vertical = vec3(0.f, viewport_height, 0.f);
+	checkCudaErrors(cudaMemcpyToSymbol((const void*)&d_vertical, &vertical, vec_size));
 
-	vec3* lower_left_corner = nullptr;
-	checkCudaErrors(cudaMallocManaged((void **)&lower_left_corner, vec_size));
-	*lower_left_corner = *origin - *horizontal * 0.5f - *vertical * 0.5f - vec3(0.f, 0.f, focal_length);
+	vec3 lower_left_corner = origin - horizontal * 0.5f - vertical * 0.5f - vec3(0.f, 0.f, focal_length);
+	checkCudaErrors(cudaMemcpyToSymbol((const void*)&d_lower_left_corner, &lower_left_corner, vec_size));
 
-
+	// Thread
 	int tx = 8;
 	int ty = 8;
 
@@ -103,10 +150,9 @@ int main() {
 	dim3 threads(tx, ty);
 
 	timer->Start();
-	render << <blocks, threads >> > (fb, img_x, img_y, origin, horizontal, vertical, lower_left_corner);
+	render << <blocks, threads >> > (fb, img_x, img_y, d_world);
 	checkCudaErrors(cudaGetLastError());
 	checkCudaErrors(cudaDeviceSynchronize());
-
 	timer->End();
 	std::cerr << "took " << timer->GetElapsedTime() << " seconds.\n";
 
@@ -126,6 +172,13 @@ int main() {
 		}
 	}
 
+	// Free memory
+	destoryWorld << <1, 1 >> > (d_objList, d_world, objListSize);
+	checkCudaErrors(cudaGetLastError());
+	checkCudaErrors(cudaDeviceSynchronize());
+
+	checkCudaErrors(cudaFree(d_world));
+	checkCudaErrors(cudaFree(d_objList));
 	checkCudaErrors(cudaFree(fb));
 	delete timer;
 

@@ -8,9 +8,10 @@
 
 class vec3 {
 public:
-	__host__ __device__ vec3() : e{ 0.f, 0.f, 0.f } { }
-	//__host__ __device__ vec3(float e0, float e1, float e2) : e{ e0,e1,e2 } {}
-	__host__ __device__ constexpr vec3(float e0, float e1, float e2) : e{ e0,e1,e2 } {}
+	__host__ __device__ vec3() { }
+
+	// constexpr expression for using constant memory
+	__host__ __device__ constexpr vec3(float e0, float e1, float e2) : e{ e0,e1,e2 } {} 
 
 	__host__ __device__ float x() const { return e[0]; }
 	__host__ __device__ float y() const { return e[1]; }

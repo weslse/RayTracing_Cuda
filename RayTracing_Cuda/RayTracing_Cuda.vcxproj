@@ -86,7 +86,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="custom_cudart.h" />
+    <ClInclude Include="hittable.h" />
+    <ClInclude Include="hittable_list.h" />
     <ClInclude Include="ray.h" />
+    <ClInclude Include="rtcuda.h" />
+    <ClInclude Include="sphere.h" />
     <ClInclude Include="Timer.h" />
     <ClInclude Include="vec3.h" />
   </ItemGroup>
